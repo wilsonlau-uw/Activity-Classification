@@ -18,10 +18,18 @@ from googletrans import Translator
 translator = Translator()
 import ML
 
-if os.path.exists('lang2EngTextMap.pickle'):
-    lang2EngTextMap = pickle.load(open('lang2EngTextMap.pickle', "rb"))
+if os.path.exists(TRANSLATED_DATA_FILE):
+    lang2EngTextMap = pickle.load(open(TRANSLATED_DATA_FILE, "rb"))
 else:
     lang2EngTextMap={'fr':{},'sp':{}}
+
+def isSameFeature(l1,l2):
+    return  l1[TEXTCOL1]==l2[TEXTCOL1] and \
+            l1[TEXTCOL2] == l2[TEXTCOL2] and \
+            l1[GF_MODULE] == l2[GF_MODULE] and \
+            l1[GF_INTERVENTION] == l2[GF_INTERVENTION] and \
+            l1[MODULE] == l2[MODULE] and \
+            l1[INTERVENTION] == l2[INTERVENTION]
 
 def loadData(args,dataFile,inFile,columns=None,testData=False):
     dataDict={}
@@ -39,13 +47,13 @@ def loadData(args,dataFile,inFile,columns=None,testData=False):
                 cols = list(line.keys())
                 cols.sort()
             row={}
-            for c in cols:
+            for c in (col for col in cols if col != TRAINFILE):
 
                 if(c not in dataDict):
                     dataDict[c] = []
 
                 if(testData):
-                    if (float(line[CONFIDENCE_LANG])>=0.97 and float(line[CONFIDENCE_TRANSLATED])>=0.97 and \
+                    if (float(line[CONFIDENCE_LANG])>=SEMISUPERVISED_CONFIDENCE and float(line[CONFIDENCE_TRANSLATED])>=SEMISUPERVISED_CONFIDENCE and \
                         line[PRED_MODULE_LANG]==line[PRED_MODULE_TRANSLATED] and line[PRED_INTERVENTION_LANG] ==  line[PRED_INTERVENTION_TRANSLATED]):
                         if(c == CORRECT_MODULE):
                             dataDict[c].append(line[PRED_MODULE_TRANSLATED])
@@ -68,6 +76,8 @@ def loadData(args,dataFile,inFile,columns=None,testData=False):
 
         if args.cache >0:
             pickle.dump((dataDict,data,cols), open(dataFile, "wb"))
+
+        dataDict[TRAINFILE]=[inFile]*len(dataDict[CORRECT_MODULE])
 
     return dataDict ,data,cols
 
@@ -104,16 +114,17 @@ def prepareforML(df,disease,lang,translate):
     sanityCheck={}
     if(translate):
         df = df[df[LANGCOL].str.startswith(disease)]
-        mlData = df[[CORRECT_MODULE, CORRECT_INTERVENTION, TEXTCOL1, TEXTCOL2, GF_MODULE, GF_INTERVENTION, MODULE, INTERVENTION,LANGCOL,BUDGET]]
-        mlData['label'] = mlData[CORRECT_MODULE] + DELIMIT + mlData[CORRECT_INTERVENTION]
+        mlData = df[[  TEXTCOL1, TEXTCOL2, GF_MODULE, GF_INTERVENTION, MODULE, INTERVENTION,LANGCOL,BUDGET,TRAINFILE]]
+        mlData['label'] = df[CORRECT_MODULE] + DELIMIT + df[CORRECT_INTERVENTION]
         texts=[]
         raws=[]
         for i,row in mlData.iterrows():
+
             raws.append('***' + row[GF_MODULE].replace(' ','_') + ' ' +
                          '***' + row[GF_INTERVENTION].replace(' ','_') + ' ' +
                          '***' + row[MODULE].replace(' ','_') + ' ' +
                          '***' + row[INTERVENTION].replace(' ','_') + ' ' +
-                         '***' + row[TEXTCOL1].split()[0] + ' ' + row[TEXTCOL2].lower())
+                         '***' + (row[TEXTCOL1].split()[0] if len(row[TEXTCOL1])>0 else '') + ' ' + row[TEXTCOL2].lower())
 
             if(not row['disease_lang_concat'].endswith('eng')):
                 translatedTxt=doTranslate(row[TEXTCOL2])
@@ -122,30 +133,32 @@ def prepareforML(df,disease,lang,translate):
                               '***' + row[GF_INTERVENTION].replace(' ','_') + ' ' +
                               '***' + row[MODULE].replace(' ','_') + ' ' +
                               '***' + row[INTERVENTION].replace(' ','_') + ' ' +
-                              '***' +row[TEXTCOL1].split()[0]  + ' ' + translatedTxt.lower() )
+                              '***' + (row[TEXTCOL1].split()[0] if len(row[TEXTCOL1])>0 else '')  + ' ' + translatedTxt.lower() )
             else:
                 texts.append( '***'+ row[GF_MODULE].replace(' ','_')  + ' ' +
                               '***' + row[GF_INTERVENTION].replace(' ','_') + ' ' +
                               '***' + row[MODULE].replace(' ','_') + ' ' +
                               '***' + row[INTERVENTION].replace(' ','_') + ' ' +
-                              '***' + row[TEXTCOL1].split()[0] + ' ' + row[TEXTCOL2].lower() )
+                              '***' +  (row[TEXTCOL1].split()[0] if len(row[TEXTCOL1])>0 else '') + ' ' + row[TEXTCOL2].lower() )
 
         mlData['text']=texts
         mlData['raw']=raws
-        pickle.dump(lang2EngTextMap, open('lang2EngTextMap.pickle', "wb"))
+        pickle.dump(lang2EngTextMap, open(TRANSLATED_DATA_FILE, "wb"))
 
     else:
         df = df[df['disease_lang_concat'].str.endswith(disease+lang)]
-        mlData = df[[CORRECT_MODULE, CORRECT_INTERVENTION, TEXTCOL1, TEXTCOL2, GF_MODULE, GF_INTERVENTION, MODULE, INTERVENTION,LANGCOL,BUDGET]]
-        mlData['label'] = mlData[CORRECT_MODULE] + DELIMIT + mlData[CORRECT_INTERVENTION]
+        mlData = df[[ TEXTCOL1, TEXTCOL2, GF_MODULE, GF_INTERVENTION, MODULE, INTERVENTION,LANGCOL,BUDGET,TRAINFILE]]
+        mlData['label'] = df[CORRECT_MODULE] + DELIMIT + df[CORRECT_INTERVENTION]
         mlData['text'] =  [ '***'+ v[GF_MODULE].replace(' ','_')  + ' ' +
                               '***' + v[GF_INTERVENTION].replace(' ','_') + ' ' +
                               '***' + v[MODULE].replace(' ','_') + ' ' +
                               '***' + v[INTERVENTION].replace(' ','_') + ' ' +
-                              '***' + v[TEXTCOL1].split()[0]+ ' ' for i,v in mlData.iterrows()]  + mlData[TEXTCOL2]
+                              '***' + (v[TEXTCOL1].split()[0] if len(v[TEXTCOL1])>0 else '')+ ' ' for i,v in mlData.iterrows()]  + mlData[TEXTCOL2]
 
     mlData = mlData.sample(n=len(mlData), random_state=3)
 
+
+    # check for inconsistent labels and remove the ones that are coming from the test results
     for i,d in mlData.iterrows():
         if(d['text'] not in sanityCheck ):
             s=set()
@@ -153,11 +166,28 @@ def prepareforML(df,disease,lang,translate):
             sanityCheck[d['text']] = s
         else:
             sanityCheck[d['text']].add(d['label'])
-    print('sanityCheck ' + '*'*20)
+
+    print('*'*20+' Checking for inconsistent labeling ' + '*'*20)
     failedCheck = [s for s in sanityCheck if len(sanityCheck[s])>1]
     for s in failedCheck:
-        print(s)
-        print('-->\n'+str('\n'.join([l for l in sanityCheck[s]] )))
+        msg=''
+        msg+='='*10+'\n'
+        formatted = s.split('***')
+        msg+=GF_MODULE+' : '+formatted[1]+'\n'
+        msg+=GF_INTERVENTION + ' : ' + formatted[2]+'\n'
+        msg+=MODULE + ' : ' + formatted[3]+'\n'
+        msg+=INTERVENTION + ' : ' + formatted[4]+'\n'
+        msg+=TEXTCOL1 + ' '+TEXTCOL2+' : ' + formatted[5]+'\n'
+        rows = mlData.loc[mlData['text'] == s]
+        mlData = mlData[~ (mlData.text.isin([s]) & mlData.file.str.endswith('test_output.csv'))]
+        rows = mlData.loc[mlData['text'] == s]
+        if(len(set(rows[TRAINFILE]))==1):
+            continue
+        msg+='-->\n' + str('\n'.join(set([CORRECT_MODULE + ' : ' + r['label'].split(DELIMIT)[
+            0] + '   ' + CORRECT_INTERVENTION + ' : ' + r['label'].split(DELIMIT)[1] + '   (' + r[TRAINFILE] + ')' for
+                                           x, r in rows.iterrows()])))+'\n'
+        msg+='=' * 10+'\n'
+        print(msg)
 
     return mlData,df
 
@@ -392,7 +422,7 @@ if __name__ == '__main__':
 
     df_train = pd.DataFrame.from_dict(dataDict)
 
-    outputSummary(df_train,data,dataDict,cols)
+    # outputSummary(df_train,data,dataDict,cols)
 
 
     if (args.use == 0):  # CV all tests

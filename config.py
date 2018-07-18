@@ -33,5 +33,6 @@ PRED_3_INTERVENTION_LANG= 'predicted_3_intervention_lang'
 CONFIDENCE_3_LANG='confidence_3_lang'
 
 DELIMIT='|'
-
 TRANSLATED_DATA_FILE='lang2EngTextMap.pickle'
+TRAINFILE='file'
+SEMISUPERVISED_CONFIDENCE=0.99
